@@ -1,28 +1,51 @@
-# JanSetu - ## "Your bridge to Sansad"
-**Transparency. Accountability. Empowerment.**
+<h1 align="center">🚀 JanSetu – Your Bridge to Sansad</h1>
+<p align="center"><strong>Transparency. Accountability. Empowerment.</strong></p>
 
-JanSetu is an AI-powered civic-tech platform that enables citizens to search, explore, and verify real parliamentary discussions. 
-By linking session transcripts with timestamped YouTube debates, it breaks down policy complexities into simple, accessible insights.
+<p align="center">
+  <img src="images/demo_search.png" alt="JanSetu Demo" width="600"/>
+</p>
 
+---
 
-###Features:
-- 🔍 Natural language + multilingual search (e.g., “Delhi water crisis”, “जल समस्या”)
-- 🎥 Direct links to official Sansad TV videos with timestamps
-- 🗣️ Speaker info, ministries, session date & bill metadata
-- 📚 AI-powered summarization of policy discussions
-- 🧠 Vector embeddings for semantic understanding
-- 🌐 Simple web interface for the general public
+## 📌 Overview
 
+**JanSetu** is an AI-powered civic-tech platform that empowers citizens to:
+- 🔍 Search any topic using natural or regional language  
+- 🎥 Directly view timestamped Sansad TV debates  
+- 🧠 Understand policies via AI-driven summaries  
 
-###Tech Stack used:
-- Backend: Python, FastAPI, MongoDB , LLM
-- AI: Google Gemini / OpenAI, Youtube data api v3
-- Data Sources: Sansad TV (YouTube channel)
-- Frontend: HTML , TailwindCSS , javascript
+It simplifies complex policy information and fosters **trust through transparency**.
 
-###Getting Started (Setup Instructions)
-1. Clone the repository:
+---
+
+## ✨ Features
+
+- 🔎 **Multilingual Natural Language Search** (`e.g. “Delhi water crisis”, “जल समस्या”`)
+- 🎬 **YouTube Links with Timestamps** (Verified via Sansad TV)
+- 🧑‍⚖️ **Speaker, Ministry & Session Metadata**
+- 📜 **Policy Summarization using LLMs**
+- 🧭 **Vector-based Semantic Search**
+- 🖥️ **User-friendly Web Interface**
+
+---
+
+## 🧰 Tech Stack
+
+| Layer         | Technology                          |
+|---------------|-------------------------------------|
+| **Backend**   | Python, FastAPI, MongoDB, LLMs      |
+| **AI/NLP**    | Google Gemini / OpenAI, Sentence Transformers |
+| **Data**      | YouTube Data API v3, Sansad TV      |
+| **Frontend**  | HTML, TailwindCSS, JavaScript       |
+
+---
+
+## ⚙️ Getting Started
+
+1. **Clone the repo**
+   ```bash
    git clone https://github.com/your-org/jansetu.git
+   cd jansetu
 
 2. Install dependencies:
    pip install -r requirements.txt
