@@ -1,3 +1,3 @@
-# JanSetu
+<ins> # JanSetu - ## "Your bridge to Sansad" </ins>
 
-## "Your bridge to parliament"
+**Transparency. Accountability. Empowerment.**
