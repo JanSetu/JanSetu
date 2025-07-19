@@ -76,5 +76,5 @@ It simplifies complex policy information and fosters **trust through transparenc
 - 📧 **Email**: [devpriyagupta8765@gmail.com](mailto:devpriyagupta8765@gmail.com)  
 - 🐙 **GitHub**: [github.com/devpriyagupta](https://github.com/devpriyagupta)  
 - 📽️ **Demo Video**: [YouTube Link](https://youtu.be/demo-link) 
-- 📂 **Project Repository**: [GitHub Repo]([https://github.com/your-org/jansetu](https://github.com/JanSetu/JanSetu)) 
+- 📂 **Project Repository**: [GitHub Repo](https://github.com/your-org/jansetu](https://github.com/JanSetu/JanSetu)) 
 
