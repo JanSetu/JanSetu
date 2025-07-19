@@ -48,29 +48,33 @@ It simplifies complex policy information and fosters **trust through transparenc
    cd jansetu
 
 2. Install dependencies:
+   ```bash
    pip install -r requirements.txt
 
-3. Setup .env file with API keys:
+4. Setup .env file with API keys:
    - YOUTUBE_API_KEY
    - MONGO_URI
    - GEMINI_API_KEY
 
-4. Run the backend server:
+5. Run the backend server:
+   ```bash
    python app.py
 
-5. Launch frontend (if separate):
-   cd frontend && npm install && npm run dev
+
+---
+
+### 👥 Team
+
+| Name                | Role                   | Responsibilities                                  |
+|---------------------|------------------------|---------------------------------------------------|
+| **Dev Priya Gupta** | Backend & AI Developer | LLM integration, knowledge graph, search engine   |
+| **Vaidehi Gupta**   | Frontend & Database    | UI/UX, TailwindCSS, MongoDB schema & APIs         |
 
 
-###Demo:
-![Search UI Screenshot](images/demo_search.png)
-🎥 [Watch Demo](https://youtu.be/demo-link)
+### 📬 Contact
 
+- 📧 **Email**: [devpriyagupta8765@gmail.com](mailto:devpriyagupta8765@gmail.com)  
+- 🐙 **GitHub**: [github.com/devpriyagupta](https://github.com/devpriyagupta)  
+- 📽️ **Demo Video**: [YouTube Link](https://youtu.be/demo-link) <!-- Replace with actual link -->
+- 📂 **Project Repository**: [GitHub Repo](https://github.com/your-org/jansetu) <!-- Replace with actual repo link -->
 
-###Team
-- Dev Priya Gupta (Backend , AI)
-- Vaidehi Gupta (Frontend , Database)
-
-
-Contact:
-Reach out via Issues or email: devpriyagupta8765@gmail.com
