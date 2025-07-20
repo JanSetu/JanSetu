@@ -2,13 +2,7 @@
 
 // CONFIGURATION - Set your server URL here
 var APP_CONFIG = {
-    // Option 1: Use manual baseURL (uncomment and set your server URL)
-    baseURL: 'http://localhost:8000',  // Local development
-    // baseURL: 'https://your-server.herokuapp.com',  // Production server
-    // baseURL: 'https://your-domain.com',  // Custom domain
-    
-    // Option 2: Auto-detect from current page (default)
-    //baseURL: null  // Will use window.location.origin
+    baseURL: 'https://your-backend.onrender.com',  // Production backend URL
 };
 
 function generateUUID() {
