@@ -11,24 +11,35 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-gray-50 min-h-screen gradient-bg">
-    <header class="bg-gradient-to-r from-white via-gray-50 to-white border-b border-gray-200 text-gray-800 shadow-xl">
+    <header class="bg-gradient-to-r from-[#FF9933] via-white to-[#138808] border-b border-gray-200 text-gray-800 shadow-xl">
         <div class="container mx-auto px-4 py-4">
-            <div class="flex items-center justify-between">
-                <div>
-                    <h1 class="text-3xl font-bold text-gray-900">JanSetu</h1>
-                    <p class="text-gray-600 mt-1">No more long talk - get straight to what dey really say</p>
+            <div class="flex justify-between items-center">
+                <!-- Left: Emblem and Title -->
+                <div class="flex items-center space-x-4">
+                    <!-- Emblem Image -->
+                    <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT1cRe0KQ6vFHELc6wYZz88kOpI2OXYmTQ3hA&s" 
+                         alt="Indian Emblem" class="h-12 w-auto" />
+
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-900">JanSetu</h1>
+                        <p class="text-gray-600 mt-1">Transparency Accountability Empowerment</p>
+                    </div>
                 </div>
+
+                <!-- Right: Status, Button -->
                 <div class="flex items-center space-x-4">
                     <div id="connectionStatus" class="flex items-center">
                         <div class="w-3 h-3 rounded-full bg-green-400 mr-2"></div>
                         <span class="text-sm">Connected</span>
                     </div>
-                    <button id="clearChat" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg transition-colors border border-gray-300">Clear Chat</button>
+                    <button id="clearChat" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg transition-colors border border-gray-300">
+                        Clear Chat
+                    </button>
                 </div>
             </div>
         </div>
     </header>
-    
+
     <div class="container mx-auto px-4 py-6 max-w-6xl">
         <!-- Welcome Section -->
         <div class="mb-6">
@@ -42,7 +53,7 @@
                             Ask About Indian Politics
                         </h2>
                         <p class="text-gray-800 mb-2">
-                            Hey! I'm JanSetu<img src="https://flagcdn.com/w20/bb.png" alt="Barbados Flag" style="width: 20px; height: 14px; display: inline-block; margin-left: 4px;"> Your AI guide to what's happening in India's Parliament. From debates to decisions, I'm here to help you stay informed and involved. Ask me anything — it's your right to know!
+                            Hey! I'm JanSetu<img src="" alt="Barbados Flag" style="width: 20px; height: 14px; display: inline-block; margin-left: 4px;"> Your AI guide to what's happening in India's Parliament. From debates to decisions, I'm here to help you stay informed and involved. Ask me anything — it's your right to know!
                         </p>
                         <p class="text-gray-600 text-sm mb-2"><strong>Examples:</strong> "What did the Minister of Health say about COVID-19?" or "Recent discussions about water management"</p>
 
