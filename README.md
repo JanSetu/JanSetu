@@ -1,10 +1,7 @@
 <h1 align="center">🚀 JanSetu – Your Bridge to Sansad</h1>
 <p align="center"><strong>Transparency. Accountability. Empowerment.</strong></p>
 
-<p align="center">
-    <img src="" alt="JanSetu Demo" width="600"/>
-  </a>
-</p>
+
 
 
 ---
