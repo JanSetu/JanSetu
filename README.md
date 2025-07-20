@@ -2,7 +2,7 @@
 <p align="center"><strong>Transparency. Accountability. Empowerment.</strong></p>
 
 <p align="center">
-  <img src="images/demo_search.png" alt="JanSetu Demo" width="600"/>
+  <img src="[images/demo_search.png](https://drive.google.com/file/d/1ivAxkk1J4gZ3m72B9AWV7rIxsO74s9oi/view?usp=sharing)" alt="JanSetu Demo" width="600"/>
 </p>
 
 ---
@@ -75,6 +75,6 @@ It simplifies complex policy information and fosters **trust through transparenc
 
 - 📧 **Email**: [devpriyagupta8765@gmail.com](mailto:devpriyagupta8765@gmail.com)  
 - 🐙 **GitHub**: [github.com/devpriyagupta](https://github.com/devpriyagupta)  
-- 📽️ **Demo Video**: [YouTube Link](https://youtu.be/demo-link) 
+- 📽️ **Demo Video**: [YouTube Link]([https://youtu.be/demo-link](https://drive.google.com/file/d/1ivAxkk1J4gZ3m72B9AWV7rIxsO74s9oi/view?usp=sharing)) 
 - 📂 **Project Repository**: [GitHub Repo](https://github.com/your-org/jansetu](https://github.com/JanSetu/JanSetu)) 
 
