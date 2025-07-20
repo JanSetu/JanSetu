@@ -2,8 +2,7 @@
 <p align="center"><strong>Transparency. Accountability. Empowerment.</strong></p>
 
 <p align="center">
-  <a href="https://drive.google.com/file/d/1ivAxkk1J4gZ3m72B9AWV7rIxsO74s9oi/view" target="_blank">
-    <img src="https://img.youtube.com/vi/YOUR_VIDEO_ID/0.jpg" alt="JanSetu Demo" width="600"/>
+    <img src="" alt="JanSetu Demo" width="600"/>
   </a>
 </p>
 
