@@ -9,4 +9,6 @@ Queries for testing -
 1- Waqf Bill discussions
 2- Budget Sessions
 3- Aircraft Bill
-4- Ministers name and their contributions (like what 
+4- Ministers name and their contributions 
+
+
