@@ -23,6 +23,10 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # Database and ML imports
 from pymongo import MongoClient, ASCENDING
 from sentence_transformers import SentenceTransformer
@@ -51,9 +55,6 @@ import pytz
 
 # Import our new session manager
 from session_manager import MongoSessionManager, ChatMessage, ChatSession
-from dotenv import load_dotenv
-load_dotenv()
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -88,112 +89,61 @@ class QueryResponse(BaseModel):
     structured_response: Optional[StructuredResponse] = None
 
 class SessionGraphState:
-    """Manages cumulative graph state for a session using JSON format."""
+    """Manages cumulative graph state for a session."""
     
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.clear_graph("New session started")
         
-    def add_json_data(self, json_data: Dict[str, Any]) -> bool:
-        """Add JSON data to the cumulative graph."""
-        try:
-            # Merge entities
-            new_entities = json_data.get('entities', [])
-            new_statements = json_data.get('statements', [])
-            
-            # Track existing entity IDs to avoid duplicates
-            existing_entity_ids = {entity['entity_id'] for entity in self.entities}
-            
-            # Add new entities
-            for entity in new_entities:
-                if entity.get('entity_id') not in existing_entity_ids:
-                    self.entities.append(entity)
-                    existing_entity_ids.add(entity['entity_id'])
-            
-            # Add new statements (allow duplicates as they may have different provenance)
-            self.statements.extend(new_statements)
-            
-            # Update counts
-            self.node_count = len(self.entities)
-            self.edge_count = len(self.statements)
-            
-            logger.info(f"📈 Session {self.session_id[:8]}: Added {len(new_entities)} entities, {len(new_statements)} statements. Total: {self.node_count} nodes, {self.edge_count} edges")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to process JSON data: {e}")
-            return False
-    
     def add_turtle_data(self, turtle_str: str) -> bool:
-        """Legacy method for backward compatibility - converts Turtle to basic JSON."""
+        """Add Turtle data to the cumulative graph."""
         try:
-            # For backward compatibility, convert basic Turtle to JSON structure
+            # Parse Turtle into temporary graph
             temp_graph = Graph()
             temp_graph.parse(data=turtle_str, format='turtle')
             
-            # Convert to basic JSON structure
-            entities = []
-            statements = []
+            # Track what we're adding
+            new_triples = len(temp_graph)
             
-            for subject, predicate, obj in temp_graph:
-                # Create basic entities and statements from triples
-                subject_id = str(subject).split('#')[-1] if '#' in str(subject) else str(subject)
-                object_id = str(obj).split('#')[-1] if '#' in str(obj) else str(obj)
-                
-                # Add entities if they don't exist
-                for entity_id in [subject_id, object_id]:
-                    if not any(e['entity_id'] == entity_id for e in entities):
-                        entities.append({
-                            'entity_id': entity_id,
-                            'entity_name': entity_id,
-                            'entity_type': 'Unknown',
-                            'entity_description': f'Entity from RDF: {entity_id}'
-                        })
-                
-                # Add statement
-                statements.append({
-                    'source_entity_id': subject_id,
-                    'target_entity_id': object_id,
-                    'relationship_description': str(predicate).split('#')[-1] if '#' in str(predicate) else str(predicate),
-                    'relationship_strength': 5,
-                    'provenance_segment_id': 'legacy_rdf'
-                })
+            # Add to cumulative graph
+            for triple in temp_graph:
+                self.graph.add(triple)
             
-            return self.add_json_data({'entities': entities, 'statements': statements})
+            # Update counts
+            self.node_count = len(set(self.graph.subjects()) | set(self.graph.objects()))
+            self.edge_count = len(self.graph)
+            
+            logger.info(f"📈 Session {self.session_id[:8]}: Added {new_triples} triples, total: {self.edge_count}")
+            return True
             
         except Exception as e:
             logger.error(f"Failed to parse Turtle: {e}")
             return False
     
-    def get_json_dump(self) -> Dict[str, Any]:
-        """Get current graph as JSON format."""
-        return {
-            'session_id': self.session_id,
-            'created_at': self.created_at.isoformat(),
-            'node_count': self.node_count,
-            'edge_count': self.edge_count,
-            'entities': self.entities,
-            'statements': self.statements
-        }
-    
     def get_turtle_dump(self) -> str:
-        """Legacy method for backward compatibility - returns JSON as string."""
+        """Get current graph as Turtle format."""
         try:
-            header = f"""# Session Graph Dump (JSON Format)
+            header = f"""# Session Graph Dump
 # Session: {self.session_id}
 # Created: {self.created_at.isoformat()}
 # Nodes: {self.node_count}, Edges: {self.edge_count}
 """
-            return header + json.dumps(self.get_json_dump(), indent=2, default=str)
+            return header + self.graph.serialize(format='turtle')
         except Exception as e:
             logger.error(f"Failed to serialize graph: {e}")
             return f"# Error serializing graph: {e}\n"
     
     def clear_graph(self, reason: str = "Topic change"):
         """Clear the cumulative graph."""
-        self.entities = []
-        self.statements = []
+        self.graph = Graph()
         self.created_at = datetime.now(timezone.utc)
+        
+        # Re-bind namespaces
+        self.graph.bind("lok", BBP)
+        self.graph.bind("schema", SCHEMA)
+        self.graph.bind("prov", PROV)
+        self.graph.bind("rdfs", RDFS)
+        self.graph.bind("rdf", RDF)
         
         self.node_count = 0
         self.edge_count = 0
@@ -207,7 +157,7 @@ class SessionGraphState:
             "node_count": self.node_count,
             "edge_count": self.edge_count,
             "created_at": self.created_at.isoformat(),
-            "size_mb": len(json.dumps(self.get_json_dump(), default=str)) / (1024 * 1024)
+            "size_mb": len(self.get_turtle_dump()) / (1024 * 1024)
         }
 
 class ParliamentaryGraphQuerier:
@@ -244,27 +194,20 @@ class ParliamentaryGraphQuerier:
             # Test connection
             self.client.admin.command("ping", maxTimeMS=3000)
             
-            # Initialize database references - updated for new knowledge graph
-            self.db = self.client["parliamentary_graph"]  # New database name
-            self.entities = self.db.entities  # New collection name
-            self.statements = self.db.statements  # Same name but different schema
-            self.provenance_segments = self.db.provenance_segments  # For video details
-            self.videos = self.db.videos  # For video metadata
-            
-            # Legacy collections for fallback (if needed)
-            self.nodes = self.db.nodes if "nodes" in self.db.list_collection_names() else None
-            self.edges = self.db.edges if "edges" in self.db.list_collection_names() else None
+            # Initialize database references
+            self.db = self.client["youtube_data"]
+            self.nodes = self.db.nodes
+            self.edges = self.db.edges
+            self.statements = self.db.statements
             
             # Create indexes if they don't exist
             try:
-                # Indexes for new entity collection
-                self.entities.create_index([("entity_type", ASCENDING)])
-                self.entities.create_index([("entity_id", ASCENDING)], unique=True)
-                self.entities.create_index([("entity_name", ASCENDING)])
+                self.nodes.create_index([("pagerank_score", ASCENDING)])
+                self.nodes.create_index([("pagerank_rank", ASCENDING)])
             except:
                 pass
             
-            logger.info("✅ Connected to MongoDB (new knowledge graph)")
+            logger.info("✅ Connected to MongoDB")
             
         except Exception as e:
             logger.error(f"❌ MongoDB connection failed: {e}")
@@ -282,7 +225,7 @@ class ParliamentaryGraphQuerier:
             logger.error(f"❌ Failed to load embedding model: {e}")
             raise RuntimeError(f"Vector search failed to initialize: {e}")
 
-    def unified_hybrid_search(self, query: str, limit: int = 20) -> List[Dict]:
+    def unified_hybrid_search(self, query: str, limit: int = 8) -> List[Dict]:
         """
         Performs both node vector search and statement text search,
         then intelligently combines and weights the results.
@@ -305,61 +248,61 @@ class ParliamentaryGraphQuerier:
             # Convert both result types to unified format
             unified_results = []
             
-            # Process entity results (was node results)
-            for entity in node_results:
+            # Process node results
+            for node in node_results:
                 unified_results.append({
-                    'uri': entity.get('entity_id', ''),  # New field name
-                    'source_type': 'entity',
-                    'content': entity.get('entity_description', ''),  # New field
-                    'label': entity.get('entity_name', ''),  # New field
-                    'node_data': entity,
-                    'vector_score': entity.get('similarity_score', 0),
+                    'uri': node['uri'],
+                    'source_type': 'node',
+                    'content': node.get('searchable_text', ''),
+                    'label': node.get('label') or node.get('name', ''),
+                    'node_data': node,
+                    'vector_score': node.get('similarity_score', 0),
                     'text_score': 0,
                     'provenance': None
                 })
             
-            # Process statement results and find their related entities
+            # Process statement results and find their related nodes
             if statement_results:
-                # Step 1: Collect all unique entity IDs from all statements
-                all_related_entity_ids = set()
-                stmt_to_entity_ids = {}  # Track which entity IDs belong to which statement
+                # Step 1: Collect all unique URIs from all statements
+                all_related_uris = set()
+                stmt_to_uris = {}  # Track which URIs belong to which statement
                 
                 for i, stmt in enumerate(statement_results):
-                    related_entity_ids = []
-                    if stmt.get('source_entity_id'): related_entity_ids.append(stmt['source_entity_id'])
-                    if stmt.get('target_entity_id'): related_entity_ids.append(stmt['target_entity_id'])
+                    related_uris = []
+                    if stmt.get('subject'): related_uris.append(stmt['subject'])
+                    if stmt.get('object'): related_uris.append(stmt['object'])
                     
-                    stmt_to_entity_ids[i] = related_entity_ids
-                    all_related_entity_ids.update(related_entity_ids)
+                    stmt_to_uris[i] = related_uris
+                    all_related_uris.update(related_uris)
                 
-                # Step 2: Fetch ALL related entities in ONE database call
-                if all_related_entity_ids:
-                    entities_cursor = self.entities.find(
-                        {'entity_id': {'$in': list(all_related_entity_ids)}},
-                        {'entity_id': 1, 'entity_name': 1, 'entity_description': 1}  # Only fetch needed fields
+                # Step 2: Fetch ALL related nodes in ONE database call
+                if all_related_uris:
+                    nodes_cursor = self.nodes.find(
+                        {'uri': {'$in': list(all_related_uris)}},
+                        {'uri': 1, 'label': 1, 'name': 1}  # Only fetch needed fields
                     )
                     
                     # Create a lookup dictionary for O(1) access
-                    entity_id_to_entity = {entity['entity_id']: entity for entity in entities_cursor}
+                    uri_to_node = {node['uri']: node for node in nodes_cursor}
                     
                     # Step 3: Build results using the lookup dictionary
                     for i, stmt in enumerate(statement_results):
-                        for entity_id in stmt_to_entity_ids[i]:
-                            entity = entity_id_to_entity.get(entity_id)
-                            if entity:
+                        for uri in stmt_to_uris[i]:
+                            node = uri_to_node.get(uri)
+                            if node:
                                 unified_results.append({
-                                    'uri': entity_id,
+                                    'uri': uri,
                                     'source_type': 'statement',
-                                    'content': stmt.get('relationship_description', ''),
-                                    'label': entity.get('entity_name', ''),
-                                    'node_data': entity,
+                                    'content': stmt.get('transcript_text', ''),
+                                    'label': node.get('label') or node.get('name', ''),
+                                    'node_data': node,
                                     'vector_score': 0,
-                                    'text_score': stmt.get('search_score', 0),
+                                    'text_score': stmt.get('score', 0),
                                     'provenance': {
-                                        'statement_id': stmt.get('_id'),
-                                        'relationship': stmt.get('relationship_description'),
-                                        'strength': stmt.get('relationship_strength'),
-                                        'provenance_segment_id': stmt.get('provenance_segment_id')
+                                        'video_id': stmt.get('source_video'),
+                                        'video_title': stmt.get('video_title'),
+                                        'start_time': stmt.get('start_offset'),
+                                        'transcript_excerpt': stmt.get('transcript_text', '')[:200] + '...'
                                     }
                                 })
             
@@ -395,15 +338,15 @@ class ParliamentaryGraphQuerier:
             return []
 
     def _search_nodes_vector(self, query: str, limit: int) -> List[Dict]:
-        """Vector search on entities using new schema"""
+        """Vector search on nodes (existing logic)"""
         query_embedding = self.embedding_model.encode(query).tolist()
         
         pipeline = [
             {"$vectorSearch": {
-                "index": "entity_vector_index",  # Updated index name
-                "path": "name_description_embedding",  # New field name
+                "index": "jansetu",
+                "path": "embedding", 
                 "queryVector": query_embedding,
-                "numCandidates": limit * 3,
+                "numCandidates": limit * 4,
                 "limit": limit
             }},
             {"$addFields": {
@@ -411,11 +354,10 @@ class ParliamentaryGraphQuerier:
             }}
         ]
         
-        return list(self.entities.aggregate(pipeline))
+        return list(self.nodes.aggregate(pipeline))
 
     def _search_statements_atlas(self, query: str, limit: int) -> List[Dict]:
-        """Atlas Search on statements - adapted for new schema"""
-        # New statements don't have transcript_text, so we search on relationship_description
+        """Atlas Search on statements - much better than $text"""
         pipeline = [
             {
                 "$search": {
@@ -425,14 +367,14 @@ class ParliamentaryGraphQuerier:
                             {
                                 "phrase": {
                                     "query": query,
-                                    "path": "relationship_description",
+                                    "path": "transcript_text",
                                     "score": {"boost": {"value": 3}}
                                 }
                             },
                             {
                                 "text": {
                                     "query": query,
-                                    "path": "relationship_description",
+                                    "path": ["transcript_text", "video_title"],
                                     "fuzzy": {"maxEdits": 1}
                                 }
                             }
@@ -447,9 +389,8 @@ class ParliamentaryGraphQuerier:
             },
             {
                 "$project": {
-                    "source_entity_id": 1, "target_entity_id": 1, 
-                    "relationship_description": 1, "relationship_strength": 1,
-                    "provenance_segment_id": 1, "_id": 1,
+                    "subject": 1, "object": 1, "transcript_text": 1,
+                    "source_video": 1, "video_title": 1, "start_offset": 1,
                     "search_score": 1
                 }
             },
@@ -574,25 +515,25 @@ class ParliamentaryGraphQuerier:
         
         return boost
 
-    def get_connected_nodes(self, entity_ids: Set[str], hops: int = 1) -> Set[str]:
-        """Get entities connected to the given entity IDs via statements."""
+    def get_connected_nodes(self, uris: Set[str], hops: int = 1) -> Set[str]:
+        """Get nodes connected to the given URIs."""
         try:
-            current, seen = set(entity_ids), set(entity_ids)
+            current, seen = set(uris), set(uris)
             for hop in range(max(0, hops)):
                 if not current or len(seen) > 500:
                     break
                     
-                statements = self.statements.find({
+                edges = self.edges.find({
                     "$or": [
-                        {"source_entity_id": {"$in": list(current)}},
-                        {"target_entity_id": {"$in": list(current)}},
+                        {"subject": {"$in": list(current)}},
+                        {"object": {"$in": list(current)}},
                     ]
                 })
                 
                 nxt = set()
-                for stmt in statements:
-                    nxt.add(stmt["source_entity_id"])
-                    nxt.add(stmt["target_entity_id"])
+                for edge in edges:
+                    nxt.add(edge["subject"])
+                    nxt.add(edge["object"])
                 
                 current = nxt - seen
                 seen.update(nxt)
@@ -601,61 +542,54 @@ class ParliamentaryGraphQuerier:
             
         except Exception as e:
             logger.error(f"Graph traversal failed: {e}")
-            return entity_ids
+            return uris
 
-    def get_subgraph(self, entity_ids: Set[str]) -> Dict[str, Any]:
-        """Get subgraph for the given entity IDs."""
+    def get_subgraph(self, uris: Set[str]) -> Dict[str, Any]:
+        """Get subgraph for the given URIs."""
         try:
-            if len(entity_ids) > 500:
-                entity_ids = set(list(entity_ids)[:500])
+            if len(uris) > 500:
+                uris = set(list(uris)[:500])
             
-            # Get entities
-            raw_entities = list(self.entities.find(
-                {"entity_id": {"$in": list(entity_ids)}}, 
+            # Get nodes
+            raw_nodes = list(self.nodes.find(
+                {"uri": {"$in": list(uris)}}, 
                 {
-                    "entity_id": 1,
-                    "entity_name": 1,
-                    "entity_type": 1,
-                    "entity_description": 1
+                    "uri": 1,
+                    "label": 1,
+                    "name": 1,
+                    "type": 1,
+                    "searchable_text": 1
                 }
             ))
             
-            # Clean entities (convert to node-like format for compatibility)
+            # Clean nodes
             cleaned_nodes = []
-            for entity in raw_entities:
+            for node in raw_nodes:
                 cleaned = {
-                    "uri": entity.get("entity_id"),
-                    "type": [entity.get("entity_type", "")]
+                    "uri": node.get("uri"),
+                    "type": node.get("type", [])
                 }
                 
-                # Handle labels - use entity_name as label
-                label = entity.get("entity_name")
+                # Handle labels - prefer label over name
+                label = node.get("label") or node.get("name")
                 if label:
                     cleaned["label"] = label
                 
-                if "entity_description" in entity:
-                    cleaned["searchable_text"] = entity["entity_description"]
+                if "searchable_text" in node:
+                    cleaned["searchable_text"] = node["searchable_text"]
                 
                 cleaned_nodes.append(cleaned)
             
-            # Get statements (convert to edge-like format for compatibility)
-            statements = list(self.statements.find({
-                "source_entity_id": {"$in": list(entity_ids)}, 
-                "target_entity_id": {"$in": list(entity_ids)}
+            # Get edges
+            edges = list(self.edges.find({
+                "subject": {"$in": list(uris)}, 
+                "object": {"$in": list(uris)}
             }))
             
-            # Convert statements to edge format
-            edges = []
-            for stmt in statements:
-                edge = {
-                    "_id": str(stmt.get("_id", "")),
-                    "subject": stmt.get("source_entity_id"),
-                    "predicate": "relationship",  # Generic predicate
-                    "object": stmt.get("target_entity_id"),
-                    "relationship_description": stmt.get("relationship_description"),
-                    "relationship_strength": stmt.get("relationship_strength")
-                }
-                edges.append(edge)
+            # Clean edges
+            for edge in edges:
+                if "_id" in edge:
+                    edge["_id"] = str(edge["_id"])
             
             return {"nodes": cleaned_nodes, "edges": edges}
             
@@ -707,10 +641,10 @@ class ParliamentaryGraphQuerier:
             logger.error(f"Turtle serialization failed: {e}")
             return f"# Error: {str(e)}\n"
 
-    def get_provenance_turtle(self, entity_ids: List[str], include_transcript: bool = True) -> str:
+    def get_provenance_turtle(self, node_uris: List[str], include_transcript: bool = True) -> str:
         """Get provenance information as Turtle format."""
         try:
-            logger.info(f"📚 Getting provenance for {len(entity_ids)} entities")
+            logger.info(f"📚 Getting provenance for {len(node_uris)} nodes")
             
             g = Graph()
             g.bind("bbp", "http://example.com/Jansetu.in/ontology#")
@@ -718,59 +652,70 @@ class ParliamentaryGraphQuerier:
             g.bind("schema", "http://schema.org/")
             g.bind("rdfs", RDFS)
             
-            for entity_id in entity_ids[:10]:  # Limit to prevent explosion
+            for uri in node_uris[:10]:  # Limit to prevent explosion
                 try:
-                    entity_uri = URIRef(entity_id)
+                    node_uri = URIRef(uri)
                     
-                    # Get related statements using new schema
+                    # Get related statements
                     projection = {
-                        "source_entity_id": 1,
-                        "target_entity_id": 1,
-                        "relationship_description": 1,
-                        "relationship_strength": 1,
-                        "provenance_segment_id": 1,
-                        "_id": 1
+                        "subject": 1,
+                        "predicate": 1, 
+                        "object": 1,
+                        "source_video": 1,
+                        "video_title": 1,
+                        "start_offset": 1,
+                        "end_offset": 1
                     }
+                    
+                    if include_transcript:
+                        projection["transcript_text"] = 1
                     
                     statements = list(self.statements.find({
                         "$or": [
-                            {"source_entity_id": entity_id},
-                            {"target_entity_id": entity_id}
+                            {"subject": uri},
+                            {"predicate": uri}, 
+                            {"object": uri}
                         ]
                     }, projection))
                     
                     # Process statements
                     for i, stmt in enumerate(statements[:5]):
-                        stmt_uri = URIRef(f"{entity_id}/statement/{i}")
+                        stmt_uri = URIRef(f"{uri}/statement/{i}")
                         
                         # Basic provenance
                         g.add((stmt_uri, RDF.type, PROV.Entity))
-                        g.add((stmt_uri, PROV.wasDerivedFrom, entity_uri))
-                        g.add((stmt_uri, SCHEMA.about, entity_uri))
+                        g.add((stmt_uri, PROV.wasDerivedFrom, node_uri))
+                        g.add((stmt_uri, SCHEMA.about, node_uri))
                         
-                        # Relationship information (new schema)
-                        relationship_desc = stmt.get("relationship_description")
-                        if relationship_desc:
-                            g.add((stmt_uri, SCHEMA.description, Literal(relationship_desc)))
+                        # Video information
+                        video_id = stmt.get("source_video")
+                        video_title = stmt.get("video_title")
+                        start_time = stmt.get("start_offset")
                         
-                        strength = stmt.get("relationship_strength")
-                        if strength:
-                            g.add((stmt_uri, SCHEMA.ratingValue, Literal(strength)))
-                        
-                        # Provenance segment information
-                        segment_id = stmt.get("provenance_segment_id")
-                        if segment_id:
-                            g.add((stmt_uri, PROV.hadPrimarySource, Literal(segment_id)))
+                        if video_id:
+                            if start_time is not None:
+                                timestamped_url = f"https://www.youtube.com/watch?v={video_id}&t={int(start_time)}s"
+                            else:
+                                timestamped_url = f"https://www.youtube.com/watch?v={video_id}"
                             
-                            # Try to get video information from segment ID
-                            # Segment IDs typically contain video ID
-                            if "_" in segment_id:
-                                video_id = segment_id.split("_")[0]
-                                video_url = f"https://www.youtube.com/watch?v={video_id}"
-                                g.add((stmt_uri, SCHEMA.url, Literal(video_url)))
+                            g.add((stmt_uri, SCHEMA.url, Literal(timestamped_url)))
+                            
+                            if video_title:
+                                g.add((stmt_uri, SCHEMA.videoTitle, Literal(video_title)))
+                        
+                        if start_time is not None:
+                            g.add((stmt_uri, SCHEMA.startTime, Literal(int(start_time))))
+                        
+                        # Transcript text
+                        if include_transcript and "transcript_text" in stmt:
+                            transcript = stmt["transcript_text"]
+                            if transcript and len(transcript.strip()) > 0:
+                                if len(transcript) > 1000:
+                                    transcript = transcript[:1000] + "..."
+                                g.add((stmt_uri, SCHEMA.text, Literal(transcript)))
                         
                 except Exception as e:
-                    logger.warning(f"Skipping provenance for {entity_id}: {e}")
+                    logger.warning(f"Skipping provenance for {uri}: {e}")
             
             header = f"# Provenance information generated {datetime.now(timezone.utc).isoformat()}Z\n\n"
             return header + g.serialize(format="turtle")
@@ -778,898 +723,6 @@ class ParliamentaryGraphQuerier:
         except Exception as e:
             logger.error(f"❌ Provenance turtle generation failed: {e}")
             return f"# Error: {str(e)}\n"
-
-    def get_provenance_details(self, segment_ids: List[str]) -> Dict[str, Dict]:
-        """Look up full provenance details for segment IDs."""
-        try:
-            if not segment_ids:
-                return {}
-            
-            # Get provenance segments
-            segments = list(self.provenance_segments.find(
-                {"_id": {"$in": segment_ids}},
-                {
-                    "_id": 1,
-                    "video_id": 1, 
-                    "time_seconds": 1,
-                    "end_time_seconds": 1,
-                    "transcript_segment": 1
-                }
-            ))
-            
-            # Get unique video IDs to fetch video metadata
-            video_ids = list(set(seg.get("video_id") for seg in segments if seg.get("video_id")))
-            
-            # Get video metadata
-            videos = {}
-            if video_ids:
-                video_docs = list(self.videos.find(
-                    {"video_id": {"$in": video_ids}},
-                    {
-                        "video_id": 1,
-                        "title": 1,
-                        "video_url": 1,
-                        "upload_date": 1
-                    }
-                ))
-                videos = {v["video_id"]: v for v in video_docs}
-            
-            # Build detailed provenance info
-            provenance_details = {}
-            for segment in segments:
-                segment_id = segment["_id"]
-                video_id = segment.get("video_id")
-                video_info = videos.get(video_id, {})
-                
-                start_time = segment.get("time_seconds", 0)
-                end_time = segment.get("end_time_seconds", start_time + 30)  # Default 30 sec if no end time
-                
-                # Construct YouTube URL with timestamp
-                base_url = video_info.get("video_url", f"https://www.youtube.com/watch?v={video_id}")
-                if not base_url.startswith("http"):
-                    base_url = f"https://www.youtube.com/watch?v={video_id}"
-                
-                # Add timestamp parameter
-                timestamped_url = f"{base_url}&t={int(start_time)}s" if start_time else base_url
-                logger.debug(f"Constructed URL for segment {segment_id}: {timestamped_url} (start_time: {start_time})")
-                
-                provenance_details[segment_id] = {
-                    "segment_id": segment_id,
-                    "video_id": video_id,
-                    "video_title": video_info.get("title", "Parliamentary Session"),
-                    "video_url": base_url,
-                    "timestamped_url": timestamped_url,
-                    "start_time": int(start_time) if start_time else None,
-                    "end_time": int(end_time) if end_time else None,
-                    "duration": int(end_time - start_time) if (start_time and end_time) else None,
-                    "transcript_text": segment.get("transcript_segment", ""),
-                    "upload_date": video_info.get("upload_date"),
-                    "formatted_timestamp": self._format_timestamp(start_time) if start_time else None
-                }
-            
-            return provenance_details
-            
-        except Exception as e:
-            logger.error(f"Error getting provenance details: {e}")
-            return {}
-    
-    def _format_timestamp(self, seconds: float) -> str:
-        """Format seconds into HH:MM:SS or MM:SS format."""
-        try:
-            total_seconds = int(seconds)
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            secs = total_seconds % 60
-            
-            if hours > 0:
-                return f"{hours}:{minutes:02d}:{secs:02d}"
-            else:
-                return f"{minutes}:{secs:02d}"
-        except:
-            return "0:00"
-    
-    def _find_bridge_connections(self, nodes_data: Dict, existing_edges: List[Dict]) -> List[Dict]:
-        """Find bridge connections to link disconnected clusters."""
-        try:
-            # Build connectivity graph
-            connected_components = self._find_connected_components(nodes_data, existing_edges)
-            
-            if len(connected_components) <= 1:
-                return []  # Already connected
-            
-            # Find potential bridge entities by searching for shared contexts
-            bridge_edges = []
-            entity_ids = list(nodes_data.keys())
-            
-            # Look for entities that could bridge clusters based on name similarity
-            bridge_candidates = []
-            for comp1_idx, comp1 in enumerate(connected_components):
-                for comp2_idx, comp2 in enumerate(connected_components):
-                    if comp1_idx >= comp2_idx:
-                        continue
-                    
-                    # Look for semantic bridges between clusters
-                    for entity1 in comp1:
-                        for entity2 in comp2:
-                            # Check if they're related by name/type
-                            node1 = nodes_data[entity1]
-                            node2 = nodes_data[entity2]
-                            
-                            # Government/Ministry connections
-                            if self._are_government_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "government connection",
-                                    "predicate": "government_related",
-                                    "strength": 7,
-                                    "bridge": True
-                                })
-                            
-                            # Policy domain connections
-                            elif self._are_policy_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "policy connection",
-                                    "predicate": "policy_related",
-                                    "strength": 6,
-                                    "bridge": True
-                                })
-                            
-                            # Speaker/Person bridges
-                            elif self._are_speaker_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "speaker connection",
-                                    "predicate": "speaker_related",
-                                    "strength": 7,
-                                    "bridge": True
-                                })
-                            
-                            # Institutional bridges
-                            elif self._are_institutional_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "institutional connection",
-                                    "predicate": "institutional_related",
-                                    "strength": 6,
-                                    "bridge": True
-                                })
-                            
-                            # Geographic/Constituency bridges
-                            elif self._are_geographic_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "geographic connection",
-                                    "predicate": "geographic_related",
-                                    "strength": 5,
-                                    "bridge": True
-                                })
-                            
-                            # Broader topic domain bridges
-                            elif self._are_topic_domain_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "topic domain connection",
-                                    "predicate": "topic_domain_related",
-                                    "strength": 5,
-                                    "bridge": True
-                                })
-                            
-                            # Parliamentary procedure bridges
-                            elif self._are_procedure_related(node1, node2):
-                                bridge_edges.append({
-                                    "source_uri": entity1,
-                                    "target_uri": entity2,
-                                    "source": entity1,
-                                    "target": entity2,
-                                    "label": "procedural connection",
-                                    "predicate": "procedure_related",
-                                    "strength": 5,
-                                    "bridge": True
-                                })
-            
-            return bridge_edges[:50]  # Allow many more bridge connections
-            
-        except Exception as e:
-            logger.warning(f"Error finding bridge connections: {e}")
-            return []
-    
-    def _find_connected_components(self, nodes_data: Dict, edges: List[Dict]) -> List[List[str]]:
-        """Find connected components in the graph."""
-        visited = set()
-        components = []
-        
-        # Build adjacency list
-        adj_list = {node_id: [] for node_id in nodes_data.keys()}
-        for edge in edges:
-            source = edge.get("source")
-            target = edge.get("target")
-            if source in adj_list and target in adj_list:
-                adj_list[source].append(target)
-                adj_list[target].append(source)
-        
-        # DFS to find components
-        def dfs(node, component):
-            visited.add(node)
-            component.append(node)
-            for neighbor in adj_list.get(node, []):
-                if neighbor not in visited:
-                    dfs(neighbor, component)
-        
-        for node_id in nodes_data.keys():
-            if node_id not in visited:
-                component = []
-                dfs(node_id, component)
-                if component:
-                    components.append(component)
-        
-        return components
-    
-    def _are_government_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are government-related."""
-        gov_terms = ["ministry", "minister", "government", "parliament", "mp", "senator"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("type", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("type", "")).lower()
-        
-        gov1 = any(term in name1 for term in gov_terms)
-        gov2 = any(term in name2 for term in gov_terms)
-        
-        return gov1 and gov2
-    
-    def _are_policy_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are policy-related."""
-        policy_terms = ["policy", "health", "education", "housing", "welfare", "economic"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("description", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("description", "")).lower()
-        
-        for term in policy_terms:
-            if term in name1 and term in name2:
-                return True
-        
-        return False
-    
-    def _are_speaker_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are speaker/person related."""
-        speaker_terms = ["honourable", "minister", "mp", "senator", "prime", "leader", "chairman", "speaker"]
-        person_indicators = ["mr", "mrs", "ms", "dr", "hon", "rt", "right"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("type", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("type", "")).lower()
-        
-        # Check for person-type entities
-        person1 = any(term in name1 for term in speaker_terms + person_indicators)
-        person2 = any(term in name2 for term in speaker_terms + person_indicators)
-        
-        # Also check for shared name words (same person in different contexts)
-        words1 = set(name1.split())
-        words2 = set(name2.split())
-        shared_words = words1.intersection(words2)
-        
-        return (person1 and person2) or (len(shared_words) >= 2 and any(word in speaker_terms for word in shared_words))
-    
-    def _are_institutional_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are institutional related."""
-        institution_terms = ["ministry", "department", "commission", "board", "authority", "corporation", 
-                           "agency", "committee", "parliament", "house", "senate", "cabinet", "office"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("type", "") + " " + node1.get("description", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("type", "") + " " + node2.get("description", "")).lower()
-        
-        inst1 = any(term in name1 for term in institution_terms)
-        inst2 = any(term in name2 for term in institution_terms)
-        
-        return inst1 and inst2
-    
-    def _are_geographic_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are geographic/constituency related."""
-        geo_terms = ["parish", "constituency", "christ church", "st michael", "st james", "st peter", 
-                    "st andrew", "st joseph", "st john", "st philip", "st lucy", "st thomas", "st george",
-                    "bridgetown", "india", "caribbean", "region", "area", "district", "community"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("description", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("description", "")).lower()
-        
-        # Check for shared geographic terms
-        for term in geo_terms:
-            if term in name1 and term in name2:
-                return True
-                
-        return False
-    
-    def _are_topic_domain_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are in related topic domains."""
-        topic_domains = {
-            "infrastructure": ["water", "roads", "transport", "utilities", "electricity", "sewage", "drainage"],
-            "social": ["health", "education", "welfare", "social", "housing", "family", "children"],
-            "economic": ["economy", "finance", "budget", "tax", "business", "trade", "investment", "jobs"],
-            "governance": ["parliament", "government", "law", "legal", "court", "justice", "administration"],
-            "environment": ["environment", "climate", "waste", "conservation", "energy", "sustainability"],
-            "culture": ["culture", "arts", "music", "heritage", "festival", "tourism", "sport"]
-        }
-        
-        name1 = (node1.get("name", "") + " " + node1.get("description", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("description", "")).lower()
-        
-        # Check if both nodes belong to the same topic domain
-        for domain, terms in topic_domains.items():
-            domain1 = any(term in name1 for term in terms)
-            domain2 = any(term in name2 for term in terms)
-            if domain1 and domain2:
-                return True
-                
-        return False
-    
-    def _are_procedure_related(self, node1: Dict, node2: Dict) -> bool:
-        """Check if two nodes are parliamentary procedure related."""
-        procedure_terms = ["motion", "bill", "act", "resolution", "amendment", "debate", "question", 
-                          "committee", "session", "sitting", "reading", "vote", "division", "order"]
-        
-        name1 = (node1.get("name", "") + " " + node1.get("type", "")).lower()
-        name2 = (node2.get("name", "") + " " + node2.get("type", "")).lower()
-        
-        proc1 = any(term in name1 for term in procedure_terms)
-        proc2 = any(term in name2 for term in procedure_terms)
-        
-        return proc1 and proc2
-    
-    def _detect_temporal_intent(self, query: str) -> Dict[str, Any]:
-        """Detect if user is asking for recent/temporal information."""
-        temporal_keywords = [
-            "recent", "recently", "latest", "current", "now", "today", 
-            "this year", "2024", "2025", "new", "modern", "contemporary"
-        ]
-        
-        query_lower = query.lower()
-        temporal_detected = any(keyword in query_lower for keyword in temporal_keywords)
-        
-        # Define "recent" as 1 year
-        from datetime import datetime, timedelta
-        recent_threshold = datetime.now() - timedelta(days=365)
-        
-        return {
-            "is_temporal_query": temporal_detected,
-            "recent_threshold": recent_threshold,
-            "detected_keywords": [kw for kw in temporal_keywords if kw in query_lower]
-        }
-    
-    def _calculate_recency_boost(self, video_published_date: str, recent_threshold: datetime) -> float:
-        """Calculate boost factor based on video published date."""
-        if not video_published_date:
-            return 1.0
-        
-        try:
-            from datetime import datetime
-            # Parse the published date
-            if isinstance(video_published_date, str):
-                # Handle different date formats
-                pub_date = datetime.fromisoformat(video_published_date.replace('Z', '+00:00'))
-            else:
-                pub_date = video_published_date
-            
-            # Calculate days since publication
-            days_old = (datetime.now() - pub_date.replace(tzinfo=None)).days
-            
-            if days_old < 0:  # Future date, shouldn't happen but handle gracefully
-                return 1.0
-            
-            # Apply exponential decay: 3x boost for very recent, decaying over 1 year
-            import math
-            boost = max(1.0, 3.0 * math.exp(-days_old / 365))
-            return boost
-            
-        except Exception as e:
-            logger.warning(f"Error calculating recency boost: {e}")
-            return 1.0
-
-    def _filter_hop_candidates(self, connected_entity_ids: set, query: str) -> List[str]:
-        """Filter hop candidates using relative degree-aware strategy to avoid hub nodes."""
-        if not connected_entity_ids:
-            return []
-            
-        # Get entity details and calculate degrees for candidates
-        entity_details = list(self.entities.find(
-            {"entity_id": {"$in": list(connected_entity_ids)}},
-            {"entity_id": 1, "entity_name": 1, "entity_description": 1}
-        ))
-        
-        # Calculate degrees for all candidates
-        candidate_degrees = {}
-        for entity_id in connected_entity_ids:
-            degree = self.statements.count_documents({
-                "$or": [
-                    {"source_entity_id": entity_id},
-                    {"target_entity_id": entity_id}
-                ]
-            })
-            candidate_degrees[entity_id] = degree
-        
-        # Get degree distribution statistics from the entire graph
-        degree_stats = self._get_degree_distribution_stats()
-        
-        # Filter and score entities using relative metrics
-        scored_entities = []
-        query_lower = query.lower()
-        
-        for entity in entity_details:
-            entity_id = entity["entity_id"]
-            degree = candidate_degrees.get(entity_id, 0)
-            name = entity.get("entity_name", "").lower()
-            desc = entity.get("entity_description", "").lower()
-            
-            # Skip ultra-hubs (>99th percentile)
-            if degree > degree_stats["p99"]:
-                continue
-                
-            # Calculate base relevance score from query matching
-            relevance_score = 0
-            query_terms = query_lower.split()
-            for term in query_terms:
-                if term in name or term in desc:
-                    relevance_score += 10
-            
-            # Apply degree-based penalty/boost using relative position
-            hub_penalty = self._calculate_hub_penalty(degree, degree_stats)
-            relevance_score *= hub_penalty
-            
-            # Boost for moderate connectivity (25th-95th percentile range)
-            if degree_stats["p25"] <= degree <= degree_stats["p95"]:
-                relevance_score *= 1.2
-                
-            # Penalize isolated nodes (<5th percentile)
-            if degree < degree_stats["p5"]:
-                relevance_score *= 0.5
-                
-            scored_entities.append((entity_id, relevance_score, degree))
-        
-        # Sort by relevance score (descending)
-        scored_entities.sort(key=lambda x: -x[1])
-        
-        # Return top 8 candidates
-        selected_ids = [entity_id for entity_id, score, degree in scored_entities[:8]]
-        
-        ultra_hubs_skipped = len([d for d in candidate_degrees.values() if d > degree_stats["p99"]])
-        logger.info(f"🎯 Hop filtering: {len(connected_entity_ids)} candidates → {len(selected_ids)} selected (skipped {ultra_hubs_skipped} ultra-hubs >p99={degree_stats['p99']})")
-        
-        return selected_ids
-    
-    def _get_degree_distribution_stats(self) -> Dict[str, float]:
-        """Calculate degree distribution statistics for the entire graph."""
-        # Use aggregation pipeline to calculate degrees efficiently
-        pipeline = [
-            {
-                "$group": {
-                    "_id": None,
-                    "source_entities": {"$addToSet": "$source_entity_id"},
-                    "target_entities": {"$addToSet": "$target_entity_id"}
-                }
-            }
-        ]
-        
-        result = list(self.statements.aggregate(pipeline))
-        if not result:
-            # Fallback if no statements
-            return {"mean": 0, "std": 1, "p5": 0, "p25": 0, "p50": 0, "p75": 0, "p95": 0, "p99": 0}
-        
-        # Get all unique entity IDs
-        all_entities = set(result[0].get("source_entities", [])) | set(result[0].get("target_entities", []))
-        
-        # Calculate degree for each entity (sample for performance if graph is very large)
-        if len(all_entities) > 10000:
-            # Sample for very large graphs
-            import random
-            sample_entities = random.sample(list(all_entities), 5000)
-        else:
-            sample_entities = list(all_entities)
-        
-        degrees = []
-        for entity_id in sample_entities:
-            degree = self.statements.count_documents({
-                "$or": [
-                    {"source_entity_id": entity_id},
-                    {"target_entity_id": entity_id}
-                ]
-            })
-            degrees.append(degree)
-        
-        if not degrees:
-            return {"mean": 0, "std": 1, "p5": 0, "p25": 0, "p50": 0, "p75": 0, "p95": 0, "p99": 0}
-        
-        # Calculate statistics
-        import numpy as np
-        degrees_array = np.array(degrees)
-        
-        return {
-            "mean": float(np.mean(degrees_array)),
-            "std": float(np.std(degrees_array)),
-            "p5": float(np.percentile(degrees_array, 5)),
-            "p25": float(np.percentile(degrees_array, 25)),
-            "p50": float(np.percentile(degrees_array, 50)),
-            "p75": float(np.percentile(degrees_array, 75)),
-            "p95": float(np.percentile(degrees_array, 95)),
-            "p99": float(np.percentile(degrees_array, 99))
-        }
-    
-    def _calculate_hub_penalty(self, degree: int, degree_stats: Dict[str, float]) -> float:
-        """Calculate hub penalty based on relative position in degree distribution."""
-        mean_degree = degree_stats["mean"]
-        std_degree = max(degree_stats["std"], 1)  # Avoid division by zero
-        
-        # Calculate z-score (how many standard deviations from mean)
-        z_score = (degree - mean_degree) / std_degree
-        
-        # Apply smooth penalty: penalty increases exponentially with z-score
-        import math
-        hub_penalty = 1.0 / (1.0 + math.exp(z_score - 1))  # Sigmoid function
-        
-        # Ensure penalty is between 0.1 and 1.0
-        return max(0.1, min(1.0, hub_penalty))
-
-    def get_structured_search_results(self, query: str, limit: int = 20, hops: int = 1) -> Dict[str, Any]:
-        """Get search results as structured JSON with focused, relevant data and temporal awareness."""
-        try:
-            logger.info(f"🔍 Structured search for: '{query}'")
-            
-            # Detect temporal intent
-            temporal_analysis = self._detect_temporal_intent(query)
-            logger.info(f"🕒 Temporal intent: {temporal_analysis}")
-            
-            # Perform hybrid search to get the most relevant initial results
-            search_results = self.unified_hybrid_search(query, limit)
-            if not search_results:
-                return {
-                    "query": query,
-                    "entities": [],
-                    "statements": [],
-                    "provenance": {},
-                    "summary": f"No results found for: {query}"
-                }
-            
-            # Get only the top search result entity IDs (much more selective)
-            seed_entity_ids = {result["uri"] for result in search_results[:min(limit*2, 40)] if "uri" in result}  # Use more seeds
-            logger.info(f"Starting with {len(seed_entity_ids)} seed entities: {list(seed_entity_ids)[:10]}")
-            
-            # Get entities data for seeds only
-            entities_data = list(self.entities.find(
-                {"entity_id": {"$in": list(seed_entity_ids)}},
-                {
-                    "entity_id": 1,
-                    "entity_name": 1, 
-                    "entity_type": 1,
-                    "entity_description": 1,
-                    "extracted_at": 1,
-                    "video_id": 1
-                }
-            ))
-            
-            # Get only high-strength statements directly involving our seed entities
-            statements_pipeline = [
-                {
-                    "$match": {
-                        "$or": [
-                            {"source_entity_id": {"$in": list(seed_entity_ids)}},
-                            {"target_entity_id": {"$in": list(seed_entity_ids)}}
-                        ],
-                        "relationship_strength": {"$gte": 5}  # Medium to high-confidence relationships
-                    }
-                },
-                {"$sort": {"relationship_strength": -1, "extracted_at": -1}},
-                {"$limit": 150}  # Allow many more statements for richer context
-            ]
-            
-            statements_data = list(self.statements.aggregate(statements_pipeline))
-            logger.info(f"Found {len(statements_data)} statements for seed entities (includes all 1-hop connections, even to ultra-hubs)")
-            
-            # If we need more context and hops > 1, get 1-hop neighbors selectively
-            if hops > 1 and len(statements_data) < 80:
-                # Get entities connected to our seeds through high-strength relationships
-                connected_entity_ids = set()
-                for stmt in statements_data:
-                    if stmt.get("source_entity_id") not in seed_entity_ids:
-                        connected_entity_ids.add(stmt.get("source_entity_id"))
-                    if stmt.get("target_entity_id") not in seed_entity_ids:
-                        connected_entity_ids.add(stmt.get("target_entity_id"))
-                
-                # Smart filtering: avoid expanding FROM high-degree hub nodes (but keep 1-hop connections TO them)
-                connected_entity_ids = self._filter_hop_candidates(connected_entity_ids, query)
-                
-                if connected_entity_ids:
-                    # Get additional entity data
-                    additional_entities = list(self.entities.find(
-                        {"entity_id": {"$in": connected_entity_ids}},
-                        {
-                            "entity_id": 1,
-                            "entity_name": 1, 
-                            "entity_type": 1,
-                            "entity_description": 1,
-                            "extracted_at": 1,
-                            "video_id": 1
-                        }
-                    ))
-                    entities_data.extend(additional_entities)
-                    
-                    # Get additional high-strength statements involving these entities
-                    additional_statements = list(self.statements.find(
-                        {
-                            "$or": [
-                                {"source_entity_id": {"$in": connected_entity_ids}},
-                                {"target_entity_id": {"$in": connected_entity_ids}}
-                            ],
-                            "relationship_strength": {"$gte": 6}  # Reasonable threshold for 2nd hop
-                        },
-                        {
-                            "_id": 1,
-                            "source_entity_id": 1,
-                            "target_entity_id": 1,
-                            "relationship_description": 1,
-                            "relationship_strength": 1,
-                            "provenance_segment_id": 1,
-                            "extracted_at": 1
-                        }
-                    ).sort("relationship_strength", -1).limit(80))
-                    
-                    statements_data.extend(additional_statements)
-                    logger.info(f"Added {len(additional_statements)} additional statements from {len(connected_entity_ids)} filtered hop candidates")
-            
-            # Collect unique segment IDs for provenance lookup (limit to top statements)
-            top_statements = sorted(statements_data, 
-                                  key=lambda x: x.get("relationship_strength", 0), 
-                                  reverse=True)[:120]
-            
-            segment_ids = list(set(
-                stmt.get("provenance_segment_id") 
-                for stmt in top_statements 
-                if stmt.get("provenance_segment_id")
-            ))
-            
-            # Get provenance details only for the most relevant segments
-            provenance_details = self.get_provenance_details(segment_ids[:15])
-            logger.debug(f"Retrieved provenance details for {len(provenance_details)} segments out of {len(segment_ids[:15])} requested")
-            
-            # Enhance statements with provenance info and temporal scoring
-            enhanced_statements = []
-            recent_count = 0
-            total_count = 0
-            date_range = {"newest": None, "oldest": None}
-            
-            for stmt in statements_data:
-                segment_id = stmt.get("provenance_segment_id")
-                enhanced_stmt = {
-                    "statement_id": str(stmt.get("_id")),
-                    "source_entity_id": stmt.get("source_entity_id"),
-                    "target_entity_id": stmt.get("target_entity_id"),
-                    "relationship_description": stmt.get("relationship_description"),
-                    "relationship_strength": stmt.get("relationship_strength", 5),
-                    "provenance_segment_id": segment_id,
-                    "extracted_at": stmt.get("extracted_at")
-                }
-                
-                # Add provenance details and calculate temporal scores
-                if segment_id and segment_id in provenance_details:
-                    provenance = provenance_details[segment_id]
-                    enhanced_stmt["provenance"] = provenance
-                    logger.debug(f"Added provenance to statement: {stmt.get('relationship_description', '')[:50]}... with URL: {provenance.get('timestamped_url', 'NO_URL')}")
-                    
-                    # Get video published date for temporal scoring
-                    video_date = None
-                    if "upload_date" in provenance and provenance["upload_date"]:
-                        video_date = provenance["upload_date"]
-                    elif "video_title" in provenance:
-                        # Try to extract date from video title if available
-                        video_title = provenance["video_title"]
-                        import re
-                        # Look for dates in title like "Tuesday 17th March" or "2020", "2025"
-                        date_match = re.search(r'(2020|2021|2022|2023|2024|2025)', video_title)
-                        if date_match:
-                            year = date_match.group(1)
-                            # Create approximate date (mid-year if no specific date)
-                            video_date = f"{year}-06-15"
-                    
-                    # Calculate temporal boost - always apply, but stronger for explicit temporal queries
-                    temporal_boost = 1.0
-                    if video_date:
-                        base_boost = self._calculate_recency_boost(video_date, temporal_analysis["recent_threshold"])
-                        if temporal_analysis["is_temporal_query"]:
-                            # Full boost for explicit temporal queries
-                            temporal_boost = base_boost
-                        else:
-                            # Lighter boost for all queries (1.0 to 1.5x range)
-                            temporal_boost = 1.0 + (base_boost - 1.0) * 0.5
-                        
-                        # Track recent vs total content
-                        total_count += 1
-                        if temporal_boost > 1.5:  # Significantly boosted = recent
-                            recent_count += 1
-                        
-                        # Track date range
-                        if video_date:
-                            if not date_range["newest"] or video_date > date_range["newest"]:
-                                date_range["newest"] = video_date
-                            if not date_range["oldest"] or video_date < date_range["oldest"]:
-                                date_range["oldest"] = video_date
-                    
-                    # Apply temporal boost to relationship strength
-                    enhanced_stmt["temporal_boost"] = temporal_boost
-                    enhanced_stmt["boosted_strength"] = enhanced_stmt["relationship_strength"] * temporal_boost
-                    enhanced_stmt["video_date"] = video_date
-                
-                enhanced_statements.append(enhanced_stmt)
-            
-            # Always sort by temporal-boosted relevance (but lighter boost for non-temporal queries)
-            enhanced_statements.sort(
-                key=lambda x: (
-                    x.get("boosted_strength", x.get("relationship_strength", 0)),
-                    x.get("temporal_boost", 1.0),
-                    x.get("extracted_at", "")
-                ), 
-                reverse=True
-            )
-            
-            if temporal_analysis["is_temporal_query"]:
-                logger.info(f"🕒 Full temporal sorting applied with {recent_count}/{total_count} recent results")
-            else:
-                logger.info(f"🕒 Light temporal boost applied with {recent_count}/{total_count} recent results")
-            
-            enhanced_statements = enhanced_statements[:100]  # Increased limit to capture more relationships
-            
-            # Build temporal metadata for the LLM
-            temporal_metadata = {
-                "query_requested_recent": temporal_analysis["is_temporal_query"],
-                "recent_content_found": recent_count,
-                "total_content_found": total_count,
-                "recent_threshold": temporal_analysis["recent_threshold"].isoformat() if temporal_analysis["recent_threshold"] else None,
-                "newest_content_date": date_range["newest"],
-                "oldest_content_date": date_range["oldest"],
-                "detected_keywords": temporal_analysis["detected_keywords"]
-            }
-            
-            result = {
-                "query": query,
-                "entities": entities_data[:20],  # Limit entities too
-                "statements": enhanced_statements,
-                "provenance": provenance_details,
-                "temporal_analysis": temporal_metadata,
-                "summary": f"Found {len(entities_data)} entities and {len(enhanced_statements)} high-relevance statements",
-                "search_metadata": {
-                    "total_entities": len(entities_data),
-                    "total_statements": len(enhanced_statements),
-                    "provenance_segments": len(provenance_details),
-                    "hops": hops,
-                    "limit": limit,
-                    "optimization": "focused_high_strength_temporal"
-                }
-            }
-            
-            logger.info(f"🎯 Optimized search complete: {len(entities_data)} entities, {len(enhanced_statements)} statements")
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ Structured search failed: {e}")
-            return {
-                "query": query,
-                "entities": [],
-                "statements": [],
-                "provenance": {},
-                "summary": f"Error searching for: {query}",
-                "error": str(e)
-            }
-
-    def _streamline_results_for_llm(self, full_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert full search results to minimal structure for LLM."""
-        try:
-            # Streamline entities
-            minimal_entities = []
-            for entity in full_results.get("entities", [])[:20]:
-                minimal_entity = {
-                    "id": entity.get("entity_id"),
-                    "name": entity.get("entity_name"),
-                    "type": entity.get("entity_type")
-                }
-                # Only include description if it's meaningful and not too long
-                desc = entity.get("entity_description", "")
-                if desc and len(desc) < 200 and desc.lower() != "unknown":
-                    minimal_entity["description"] = desc[:200]
-                minimal_entities.append(minimal_entity)
-            
-            # Streamline statements with inline provenance
-            minimal_statements = []
-            provenance_data = full_results.get("provenance", {})
-            
-            for stmt in full_results.get("statements", [])[:100]:
-                minimal_stmt = {
-                    "source": stmt.get("source_entity_id"),
-                    "target": stmt.get("target_entity_id"),
-                    "relationship": stmt.get("relationship_description"),
-                    "strength": stmt.get("relationship_strength", 5)
-                }
-                
-                # Try to get provenance from statement first
-                if "provenance" in stmt and stmt["provenance"]:
-                    prov = stmt["provenance"]
-                    # Look for timestamped_url first (with timestamp), then fallback to video_url
-                    if "timestamped_url" in prov:
-                        minimal_stmt["source_url"] = prov["timestamped_url"]
-                    elif "video_url" in prov:
-                        minimal_stmt["source_url"] = prov["video_url"]
-                    elif "youtube_url" in prov:  # Legacy field support
-                        minimal_stmt["source_url"] = prov["youtube_url"]
-                    if "video_title" in prov:
-                        minimal_stmt["source_title"] = prov["video_title"]
-                # Otherwise try to get from provenance_details using segment_id
-                elif "provenance_segment_id" in stmt and stmt["provenance_segment_id"] in provenance_data:
-                    prov = provenance_data[stmt["provenance_segment_id"]]
-                    # Look for timestamped_url first (with timestamp), then fallback to video_url  
-                    if "timestamped_url" in prov:
-                        minimal_stmt["source_url"] = prov["timestamped_url"]
-                    elif "video_url" in prov:
-                        minimal_stmt["source_url"] = prov["video_url"]
-                    elif "youtube_url" in prov:  # Legacy field support
-                        minimal_stmt["source_url"] = prov["youtube_url"]
-                    if "video_title" in prov:
-                        minimal_stmt["source_title"] = prov["video_title"]
-                        
-                # Debug log if no URL found but title exists
-                if "source_title" in minimal_stmt and "source_url" not in minimal_stmt:
-                    logger.debug(f"Statement has title but no URL: {minimal_stmt['relationship'][:50]}...")
-                    # Show available provenance fields for debugging
-                    if "provenance" in stmt and stmt["provenance"]:
-                        prov_keys = list(stmt["provenance"].keys())
-                        logger.debug(f"Available provenance fields: {prov_keys}")
-                    elif "provenance_segment_id" in stmt and stmt["provenance_segment_id"] in provenance_data:
-                        prov_keys = list(provenance_data[stmt["provenance_segment_id"]].keys())
-                        logger.debug(f"Available provenance_data fields: {prov_keys}")
-                    else:
-                        logger.debug(f"No provenance data found for segment_id: {stmt.get('provenance_segment_id', 'NONE')}")
-                
-                minimal_statements.append(minimal_stmt)
-            
-            # Simple temporal context
-            temporal_analysis = full_results.get("temporal_analysis", {})
-            date_range = None
-            if temporal_analysis.get("oldest_content_date") and temporal_analysis.get("newest_content_date"):
-                oldest_year = temporal_analysis["oldest_content_date"][:4]
-                newest_year = temporal_analysis["newest_content_date"][:4]
-                date_range = f"{oldest_year}-{newest_year}"
-            
-            minimal_temporal = {
-                "found_recent": temporal_analysis.get("recent_content_found", 0) > 0,
-                "date_range": date_range
-            }
-            
-            # Build minimal result
-            minimal_result = {
-                "query": full_results.get("query"),
-                "entities": minimal_entities,
-                "statements": minimal_statements,
-                "temporal_context": minimal_temporal,
-                "summary": f"Found {len(minimal_entities)} entities and {len(minimal_statements)} relationships"
-            }
-            
-            return minimal_result
-            
-        except Exception as e:
-            logger.error(f"Error streamlining results: {e}")
-            # Return original if streamlining fails
-            return full_results
 
     def close(self):
         """Close database connection."""
@@ -1878,9 +931,9 @@ class ParliamentarySystem:
         self.current_session_id = None
         
         # Create enhanced search tools with session context
-        def search_parliament_hybrid(query: str, hops: int = 1, limit: int = 8) -> str:
+        def search_parliament_hybrid(query: str, hops: int = 2, limit: int = 5) -> str:
             """
-            Search parliamentary records using structured search with full provenance details.
+            Search parliamentary records using hybrid search with session graph integration.
             
             Args:
                 query: Search query for parliamentary information
@@ -1888,51 +941,51 @@ class ParliamentarySystem:
                 limit: Maximum number of results (1-10)
             
             Returns:
-                Parliamentary data as structured JSON with entities, statements, and full provenance
+                Parliamentary data in Turtle format with facts and relationships
             """
             try:
                 logger.info(f"🔍 Searching parliament: {query}")
                 
-                # Get structured search results with full provenance
-                search_results = self.querier.get_structured_search_results(query, limit, hops)
+                # Perform hybrid search
+                seeds = self.querier.unified_hybrid_search(query, limit)
+                if not seeds:
+                    return f"# No parliamentary data found for: {query}\n"
                 
-                if not search_results["entities"] and not search_results["statements"]:
-                    return json.dumps({
-                        "query": query,
-                        "entities": [],
-                        "statements": [],
-                        "temporal_context": {"found_recent": False, "date_range": None},
-                        "summary": f"No parliamentary data found for: {query}"
-                    }, indent=2)
+                # Get connected nodes
+                seed_uris = {node["uri"] for node in seeds if "uri" in node}
+                all_uris = self.querier.get_connected_nodes(seed_uris, hops)
                 
-                # Update session graph with JSON data if we have session context
+                # Get subgraph and convert to turtle
+                subgraph = self.querier.get_subgraph(all_uris)
+                turtle_data = self.querier.to_turtle(subgraph)
+                
+                # Get provenance data
+                provenance_data = ""
+                if seed_uris:
+                    provenance_turtle = self.querier.get_provenance_turtle(list(seed_uris)[:5])
+                    provenance_data = f"\n\n# PROVENANCE DATA:\n{provenance_turtle}"
+                
+                combined_data = turtle_data + provenance_data
+                
+                # Update session graph if we have session context
                 if self.current_session_id:
                     try:
                         session_graph = self.get_or_create_session_graph(self.current_session_id)
-                        # Store JSON data in session memory instead of RDF
-                        session_graph.add_json_data(search_results)
-                        logger.info(f"📈 Updated session graph: {session_graph.get_stats()}")
+                        main_data = turtle_data.split("# PROVENANCE DATA:")[0].strip()
+                        
+                        if main_data and not main_data.startswith("# Error"):
+                            session_graph.add_turtle_data(main_data)
+                            logger.info(f"📈 Updated session graph: {session_graph.get_stats()}")
                     except Exception as e:
                         logger.warning(f"Failed to update session graph: {e}")
                 
-                logger.info(f"🎯 Found {len(search_results['entities'])} entities, {len(search_results['statements'])} statements")
+                logger.info(f"🎯 Found {len(subgraph.get('nodes', []))} nodes, {len(subgraph.get('edges', []))} edges")
                 
-                # Streamline results for LLM
-                minimal_results = self.querier._streamline_results_for_llm(search_results)
-                logger.info(f"📦 Streamlined to {len(minimal_results['entities'])} entities, {len(minimal_results['statements'])} statements")
-                
-                # Return minimal JSON string
-                return json.dumps(minimal_results, indent=2, default=str)
+                return combined_data
                 
             except Exception as e:
                 logger.error(f"Parliament search failed: {e}")
-                return json.dumps({
-                    "query": query,
-                    "entities": [],
-                    "statements": [],
-                    "temporal_context": {"found_recent": False, "date_range": None},
-                    "summary": f"Error searching parliament: {str(e)}"
-                }, indent=2)
+                return f"# Error searching parliament: {str(e)}\n"
         
         def clear_session_graph(reason: str = "Topic change detected") -> str:
             """
@@ -1998,7 +1051,7 @@ class ParliamentarySystem:
                 logger.error(f"Failed to visualize graph: {e}")
                 return f"Error generating graph visualization: {e}"
         
-        bb_timezone = pytz.timezone("Asia/Kolkata")
+        bb_timezone = pytz.timezone("America/Barbados")
         current_date = datetime.now(bb_timezone).strftime("%Y-%m-%d")
 
         # Read and format the prompt safely
@@ -2037,7 +1090,7 @@ Search for parliamentary information when asked about topics, ministers, debates
         self.agent = LlmAgent(
             name="Jansetu",
             model="gemini-2.5-flash-preview-05-20",
-            description="AI assistant for Indian Parliament with cumulative graph memory and visualization",
+            description="AI assistant for Barbados Parliament with cumulative graph memory and visualization",
             planner=BuiltInPlanner(thinking_config=types.ThinkingConfig(thinking_budget=0)),
             instruction=formatted_prompt,
             tools=[
@@ -2094,95 +1147,71 @@ Search for parliamentary information when asked about topics, ministers, debates
             if session_graph.edge_count == 0:
                 return "# Session graph is empty - start a conversation to build the knowledge graph!\n"
             
-            # Extract nodes and edges from JSON data structure
-            json_data = session_graph.get_json_dump()
-            entities = json_data.get('entities', [])
-            statements = json_data.get('statements', [])
-            
-            # Build nodes data from entities
+            # Extract all nodes and their metadata from the RDF graph
             nodes_data = {}
-            for entity in entities:
-                entity_id = entity.get('entity_id')
-                if entity_id:
-                    nodes_data[entity_id] = {
-                        "uri": entity_id,
-                        "id": entity_id,
-                        "label": entity.get('entity_name', entity_id),
-                        "name": entity.get('entity_name', entity_id),
-                        "type": entity.get('entity_type', 'Unknown'),
-                        "description": entity.get('entity_description', ''),
-                        "properties": {
-                            "type": entity.get('entity_type', 'Unknown'),
-                            "description": entity.get('entity_description', '')[:100] + '...' if len(entity.get('entity_description', '')) > 100 else entity.get('entity_description', '')
-                        },
+            all_edges = []
+            node_connections = {}  # Track connection counts for each node
+            
+            # First pass: collect all node URIs, properties, and count connections
+            for subject, predicate, obj in session_graph.graph:
+                subj_uri = str(subject)
+                pred_uri = str(predicate)
+                obj_uri = str(obj) if str(obj).startswith("http") else None
+                
+                # Initialize node data if not exists
+                if subj_uri not in nodes_data:
+                    nodes_data[subj_uri] = {
+                        "uri": subj_uri,
+                        "id": self._extract_display_name(subj_uri),
+                        "label": None,
+                        "name": None,
+                        "type": None,
+                        "properties": {},
                         "connection_count": 0
                     }
-            
-            # Build edges from statements and update connection counts
-            all_edges = []
-            missing_entities = set()
-            for stmt in statements:
-                source_id = stmt.get('source_entity_id')
-                target_id = stmt.get('target_entity_id')
-                relationship = stmt.get('relationship_description', 'related to')
                 
-                if source_id and target_id:
-                    # Check if both entities exist, create missing ones if needed
-                    if source_id not in nodes_data:
-                        missing_entities.add(source_id)
-                        nodes_data[source_id] = {
-                            "uri": source_id,
-                            "id": source_id,
-                            "label": source_id.replace('_', ' ').title(),
-                            "name": source_id.replace('_', ' ').title(),
-                            "type": "Unknown",
-                            "description": f"Entity referenced in relationships: {source_id}",
-                            "properties": {"type": "Unknown"},
-                            "connection_count": 0
-                        }
-                    
-                    if target_id not in nodes_data:
-                        missing_entities.add(target_id)
-                        nodes_data[target_id] = {
-                            "uri": target_id,
-                            "id": target_id,
-                            "label": target_id.replace('_', ' ').title(),
-                            "name": target_id.replace('_', ' ').title(),
-                            "type": "Unknown",
-                            "description": f"Entity referenced in relationships: {target_id}",
-                            "properties": {"type": "Unknown"},
-                            "connection_count": 0
-                        }
-                    
-                    # Update connection counts
-                    nodes_data[source_id]["connection_count"] += 1
-                    nodes_data[target_id]["connection_count"] += 1
+                if obj_uri and obj_uri not in nodes_data:
+                    nodes_data[obj_uri] = {
+                        "uri": obj_uri,
+                        "id": self._extract_display_name(obj_uri),
+                        "label": None,
+                        "name": None,
+                        "type": None,
+                        "properties": {},
+                        "connection_count": 0
+                    }
+                
+                # Collect properties for subject node
+                if pred_uri.endswith("/label") or pred_uri.endswith("#label") or "label" in pred_uri.lower():
+                    nodes_data[subj_uri]["label"] = str(obj)
+                elif pred_uri.endswith("/name") or pred_uri.endswith("#name") or "name" in pred_uri.lower():
+                    nodes_data[subj_uri]["name"] = str(obj)
+                elif pred_uri.endswith("/type") or pred_uri.endswith("#type") or "type" in pred_uri.lower():
+                    nodes_data[subj_uri]["type"] = str(obj)
+                else:
+                    # Store other properties
+                    prop_name = self._extract_display_name(pred_uri)
+                    nodes_data[subj_uri]["properties"][prop_name] = str(obj)
+                
+                # Count connections (both incoming and outgoing)
+                if obj_uri:
+                    nodes_data[subj_uri]["connection_count"] += 1
+                    nodes_data[obj_uri]["connection_count"] += 1
                     
                     all_edges.append({
-                        "source_uri": source_id,
-                        "target_uri": target_id,
-                        "source": source_id,
-                        "target": target_id,
-                        "label": relationship,
-                        "predicate": relationship,
-                        "strength": stmt.get('relationship_strength', 5)
+                        "source_uri": subj_uri,
+                        "target_uri": obj_uri,
+                        "source": self._extract_display_name(subj_uri),
+                        "target": self._extract_display_name(obj_uri),
+                        "label": self._extract_display_name(pred_uri),
+                        "predicate": pred_uri
                     })
-            
-            if missing_entities:
-                logger.info(f"Created {len(missing_entities)} missing entities: {list(missing_entities)[:5]}...")
-            
-            # Find and add bridge connections to link disconnected clusters
-            bridge_edges = self.querier._find_bridge_connections(nodes_data, all_edges)
-            if bridge_edges:
-                logger.info(f"🌉 Found {len(bridge_edges)} bridge connections to link clusters")
-                all_edges.extend(bridge_edges)
             
             # Calculate node importance score combining properties and connections
             for uri, node_data in nodes_data.items():
                 property_score = len(node_data["properties"]) * 2  # Properties are valuable
                 connection_score = node_data["connection_count"]   # Connections show importance
-                description_score = 1 if node_data.get("description") else 0  # Entities with descriptions are more valuable
-                node_data["importance_score"] = property_score + connection_score + description_score
+                node_data["importance_score"] = property_score + connection_score
             
             # Smart node selection: prioritize connected nodes and important hubs
             all_nodes = list(nodes_data.values())
@@ -2253,22 +1282,16 @@ Search for parliamentary information when asked about topics, ministers, debates
                     "type": node_data["type"],
                     "properties": node_data["properties"],
                     "connection_count": node_data["connection_count"],
-                    "importance_score": node_data["importance_score"],
-                    "description": node_data.get("description", "")
+                    "importance_score": node_data["importance_score"]
                 }
                 final_nodes.append(node)
             
             # Filter edges to only include selected nodes
             selected_node_ids = {node["id"] for node in final_nodes}
-            logger.info(f"📊 Selected node IDs: {list(selected_node_ids)[:5]}...")
-            logger.info(f"📊 Sample edge: {all_edges[0] if all_edges else 'No edges'}")
-            
             final_edges = [
                 edge for edge in all_edges 
                 if edge["source"] in selected_node_ids and edge["target"] in selected_node_ids
             ]
-            
-            logger.info(f"📊 Edge filtering: {len(all_edges)} total -> {len(final_edges)} filtered")
             
             # Remove duplicate edges (can happen with bidirectional relationships)
             unique_edges = []
