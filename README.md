@@ -73,6 +73,6 @@ It simplifies complex policy information and fosters **trust through transparenc
 ### 📬 Contact
 
 - 📧 **Email**: [devpriyagupta8765@gmail.com](mailto:devpriyagupta8765@gmail.com)   
-- 📽️ **Demo Video**: [YouTube Link](https://drive.google.com/file/d/1ivAxkk1J4gZ3m72B9AWV7rIxsO74s9oi/view?usp=sharing) 
+- 📽️ **Demo Video**: [YouTube Link](https://www.youtube.com/watch?v=Hfraw21HvIs) 
 - 📂 **Project Repository**: [GitHub Repo](https://github.com/your-org/jansetu](https://github.com/JanSetu/JanSetu)) 
 
