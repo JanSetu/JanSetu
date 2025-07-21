@@ -23,10 +23,6 @@ from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 # Database and ML imports
 from pymongo import MongoClient, ASCENDING
 from sentence_transformers import SentenceTransformer
@@ -55,6 +51,8 @@ import pytz
 
 # Import our new session manager
 from session_manager import MongoSessionManager, ChatMessage, ChatSession
+from dotenv import load_dotenv
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
