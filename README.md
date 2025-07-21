@@ -2,9 +2,12 @@
 <p align="center"><strong>Transparency. Accountability. Empowerment.</strong></p>
 
 
+<img width="1463" height="835" alt="Screenshot 2025-07-20 at 10 50 16 PM" src="https://github.com/user-attachments/assets/6682061a-3932-4e8d-89b2-87a0b7e46434" />
 
+<img width="1216" height="786" alt="Screenshot 2025-07-20 at 10 50 32 PM" src="https://github.com/user-attachments/assets/5bac8b15-5fc8-41cb-9e1e-26126e4e32fa" />
 
----
+---<img width="1185" height="569" alt="Screenshot 2025-07-20 at 10 50 44 PM" src="https://github.com/user-attachments/assets/e9a426d6-4c83-4ff5-8f8a-38e5d91d3e80" />
+
 
 ## 📌 Overview
 
