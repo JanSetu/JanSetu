@@ -8,7 +8,7 @@
 <img width="800" height="auto" alt="Screenshot 2025-07-20 at 10 50 32 PM" src="https://github.com/user-attachments/assets/5bac8b15-5fc8-41cb-9e1e-26126e4e32fa" />
 </p>
 <p align="center">
----<img width="800" height="auto" alt="Screenshot 2025-07-20 at 10 50 44 PM" src="https://github.com/user-attachments/assets/e9a426d6-4c83-4ff5-8f8a-38e5d91d3e80" />
+<img width="800" height="auto" alt="Screenshot 2025-07-20 at 10 50 44 PM" src="https://github.com/user-attachments/assets/e9a426d6-4c83-4ff5-8f8a-38e5d91d3e80" />
 </p>
 
 ## 📌 Overview
