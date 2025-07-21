@@ -27,7 +27,6 @@ It simplifies complex policy information and fosters **trust through transparenc
 - 🔎 **Multilingual Natural Language Search** (`e.g. “Delhi water crisis”, “जल समस्या”`)
 - 🎬 **YouTube Links with Timestamps** (Verified via Sansad TV)
 - 🧑‍⚖️ **Speaker, Ministry & Session Metadata**
-- 📜 **Policy Summarization using LLMs**
 - 🧭 **Vector-based Semantic Search**
 - 🖥️ **User-friendly Web Interface**
 
@@ -56,14 +55,35 @@ It simplifies complex policy information and fosters **trust through transparenc
    pip install -r requirements.txt
 
 4. Setup .env file with API keys:
-   - YOUTUBE_API_KEY
-   - MONGO_URI
-   - GEMINI_API_KEY
+   - YOUTUBE_API_KEY [Google Cloud API - Enable the youtube data api v3]
+   - MONGO_URI [Create a mongodb cluster]
+   - GEMINI_API_KEY [ Google Cloud API - Enable Gemini api]
 
-5. Run the backend server:
+5. Run this to upload the youtube transcript data to your mongodb.
    ```bash
-   python app.py
+   python script/bulk_youtube_mongo.py new_data/
+Output : raw_video is uploaded in your mongodb cluster
 
+6. Run to process the raw_video in your mongodb to generate videos.
+   ```bash
+   python script/mongodb_transcript_processor.py --database youtube_data
+Output : videos is created in your mongodb cluster 
+
+7. Run to process the videos in your mongodb to generate ttl file.
+   ```bash
+   python script/mongodb_ttl_generator.py --database youtube_data
+Output : ttl and json-ld section are created within every videos collection in your mongodb cluster
+
+8. Run to store the data in form of knowledge graph[nodes,edges,statements].
+   ```bash
+   python script/mongodb_graph_loader.py --database youtube_data
+Output : nodes, edges, statements are created in your mongodb youtube_data cluster
+
+9. Run the backend server:
+   ```bash
+   python jansetu.py
+
+10. open the index.html page and go live
 
 ---
 
