@@ -87,17 +87,10 @@ Output : nodes, edges, statements are created in your mongodb youtube_data clust
 
 ---
 
-### 👥 Team
-
-| Name                | Role                   | Responsibilities                                  |
-|---------------------|------------------------|---------------------------------------------------|
-| **Dev Priya Gupta** | Backend & AI Developer | LLM integration, knowledge graph, search engine   |
-| **Vaidehi Gupta**   | Frontend & Database    | UI/UX, TailwindCSS, MongoDB schema & APIs         |
-
 
 ### 📬 Contact
 
 - 📧 **Email**: [devpriyagupta8765@gmail.com](mailto:devpriyagupta8765@gmail.com)   
-- 📽️ **Demo Video**: [YouTube Link](https://www.youtube.com/watch?v=Hfraw21HvIs) 
+- 📽️ **Demo Video**: [YouTube Link](https://youtu.be/F75yKW-K0pM) 
 - 📂 **Project Repository**: [GitHub Repo](https://github.com/JanSetu/JanSetu/tree/main) 
 
